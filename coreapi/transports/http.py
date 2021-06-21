@@ -111,34 +111,38 @@ def _get_params(method, encoding, fields, params=None):
     # Ensure graceful behavior in edge-case where both location='body' and
     # location='form' fields are present.
     seen_body = False
+    if isinstance(params, list) and method in ('PUT', 'PATCH'):
+        data = []
+        for param in params:
+            data.append(utils.validate_form_param(param, encoding=encoding))
+    else:
+        for key, value in params.items():
+            if key not in field_map or not field_map[key].location:
+                # Default is 'query' for 'GET' and 'DELETE', and 'form' for others.
+                location = 'query' if method in ('GET', 'DELETE') else 'form'
+            else:
+                location = field_map[key].location
 
-    for key, value in params.items():
-        if key not in field_map or not field_map[key].location:
-            # Default is 'query' for 'GET' and 'DELETE', and 'form' for others.
-            location = 'query' if method in ('GET', 'DELETE') else 'form'
-        else:
-            location = field_map[key].location
+            if location == 'form' and encoding == 'application/octet-stream':
+                # Raw uploads should always use 'body', not 'form'.
+                location = 'body'
 
-        if location == 'form' and encoding == 'application/octet-stream':
-            # Raw uploads should always use 'body', not 'form'.
-            location = 'body'
+            try:
+                if location == 'path':
+                    path[key] = utils.validate_path_param(value)
+                elif location == 'query':
+                    query[key] = utils.validate_query_param(value)
+                elif location == 'body':
+                    data = utils.validate_body_param(value, encoding=encoding)
+                    seen_body = True
+                elif location == 'form':
+                    if not seen_body:
+                        data[key] = utils.validate_form_param(value, encoding=encoding)
+            except exceptions.ParameterError as exc:
+                errors[key] = "%s" % exc
 
-        try:
-            if location == 'path':
-                path[key] = utils.validate_path_param(value)
-            elif location == 'query':
-                query[key] = utils.validate_query_param(value)
-            elif location == 'body':
-                data = utils.validate_body_param(value, encoding=encoding)
-                seen_body = True
-            elif location == 'form':
-                if not seen_body:
-                    data[key] = utils.validate_form_param(value, encoding=encoding)
-        except exceptions.ParameterError as exc:
-            errors[key] = "%s" % exc
-
-    if errors:
-        raise exceptions.ParameterError(errors)
+        if errors:
+            raise exceptions.ParameterError(errors)
 
     # Move any files from 'data' into 'files'.
     if isinstance(data, dict):
